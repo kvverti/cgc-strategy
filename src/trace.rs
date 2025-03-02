@@ -1,6 +1,6 @@
 use std::{marker::{PhantomData, PhantomPinned}, rc::Rc, sync::Arc, collections::{VecDeque, LinkedList}};
 
-use crate::{Gc, Handle};
+use crate::{Gc, heap::Handle};
 
 pub struct TraceContext<'a> {
     gc_visitor: &'a dyn Fn(Handle),
