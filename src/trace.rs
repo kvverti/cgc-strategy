@@ -1,6 +1,6 @@
-use std::{marker::{PhantomData, PhantomPinned}, rc::Rc, sync::Arc, collections::{VecDeque, LinkedList}};
+use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{Gc, heap::Handle};
+use crate::{heap::Handle, Gc};
 
 pub struct TraceContext<'a> {
     gc_visitor: &'a dyn Fn(Handle),
@@ -20,7 +20,7 @@ impl TraceContext<'_> {
 /// GC shared access to all nested GC objects at all times. This prevents types that give exclusive access
 /// to nested GC objects, such as mutexes, from being GC objects. That being said, types that contain only
 /// `Trace` types will generally be able to implement this trait.
-/// 
+///
 /// ## Thread Safety
 /// The implementation of [`Trace::trace`] must be thread-safe, as the GC may invoke this method from a different thread
 /// while other threads are concurrently accessing the object. This may occur even if the type does not implement `Sync`.
@@ -66,12 +66,17 @@ empty_trace! {
     u8 u16 u32 u64 u128
     i8 i16 i32 i64 i128
     f32 f64
-    char str std::ffi::CStr std::path::Path std::ffi::OsStr
-    String std::ffi::CString std::path::PathBuf std::ffi::OsString
-    std::any::TypeId
+    char str core::ffi::CStr
+    core::any::TypeId
     PhantomPinned
 }
 empty_trace! { () }
+
+#[cfg(feature = "std")]
+empty_trace! {
+    std::path::Path std::ffi::OsStr
+    String std::ffi::CString std::path::PathBuf std::ffi::OsString
+}
 
 /// SAFETY: there is nothing to trace
 unsafe impl<T: ?Sized> Trace for PhantomData<T> {
@@ -99,27 +104,6 @@ unsafe impl<T: ?Sized> Trace for Gc<T> {
     }
 }
 
-/// SAFETY: The referent's trace method is safe to call, and Box imposes no extra requirements.
-unsafe impl<T: Trace + ?Sized> Trace for Box<T> {
-    fn trace(&self, ctx: &TraceContext<'_>) {
-        (**self).trace(ctx);
-    }
-}
-
-/// SAFETY: We don't touch the reference counts and only invoke T's trace method.
-unsafe impl<T: Trace + ?Sized> Trace for Rc<T> {
-    fn trace(&self, ctx: &TraceContext<'_>) {
-        (**self).trace(ctx);
-    }
-}
-
-/// SAFETY: We only invoke T's trace method and do not touch any of Arc's state.
-unsafe impl<T: Trace + ?Sized> Trace for Arc<T> {
-    fn trace(&self, ctx: &TraceContext<'_>) {
-        (**self).trace(ctx);
-    }
-}
-
 /// SAFETY: arrays impose no additional requirements for accessing elements.
 unsafe impl<T: Trace, const N: usize> Trace for [T; N] {
     fn trace(&self, ctx: &TraceContext<'_>) {
@@ -131,31 +115,6 @@ unsafe impl<T: Trace, const N: usize> Trace for [T; N] {
 
 /// SAFETY: slices impose no additional requirements for accessing elements.
 unsafe impl<T: Trace> Trace for [T] {
-    fn trace(&self, ctx: &TraceContext<'_>) {
-        for elem in self {
-            elem.trace(ctx);
-        }
-    }
-}
-
-/// SAFETY: vec imposes no additional requirements for accessing elements.
-unsafe impl<T: Trace> Trace for Vec<T> {
-    fn trace(&self, ctx: &TraceContext<'_>) {
-        for elem in self {
-            elem.trace(ctx);
-        }
-    }
-}
-
-unsafe impl<T: Trace> Trace for VecDeque<T> {
-    fn trace(&self, ctx: &TraceContext<'_>) {
-        for elem in self {
-            elem.trace(ctx);
-        }
-    }
-}
-
-unsafe impl<T: Trace> Trace for LinkedList<T> {
     fn trace(&self, ctx: &TraceContext<'_>) {
         for elem in self {
             elem.trace(ctx);
@@ -265,4 +224,54 @@ fns_trace! {
     (A B C D E F G H I J K L M N O P Q R S T U V W X => R1)
     (A B C D E F G H I J K L M N O P Q R S T U V W X Y => R1)
     (A B C D E F G H I J K L M N O P Q R S T U V W X Y Z => R1)
+}
+
+#[cfg(feature = "alloc")]
+mod alloc_impls {
+    use super::{Trace, TraceContext};
+
+    /// SAFETY: The referent's trace method is safe to call, and Box imposes no extra requirements.
+    unsafe impl<T: Trace + ?Sized> Trace for alloc::boxed::Box<T> {
+        fn trace(&self, ctx: &TraceContext<'_>) {
+            (**self).trace(ctx);
+        }
+    }
+
+    /// SAFETY: We don't touch the reference counts and only invoke T's trace method.
+    unsafe impl<T: Trace + ?Sized> Trace for alloc::rc::Rc<T> {
+        fn trace(&self, ctx: &TraceContext<'_>) {
+            (**self).trace(ctx);
+        }
+    }
+
+    /// SAFETY: We only invoke T's trace method and do not touch any of Arc's state.
+    unsafe impl<T: Trace + ?Sized> Trace for alloc::sync::Arc<T> {
+        fn trace(&self, ctx: &TraceContext<'_>) {
+            (**self).trace(ctx);
+        }
+    }
+    /// SAFETY: vec imposes no additional requirements for accessing elements.
+    unsafe impl<T: Trace> Trace for alloc::vec::Vec<T> {
+        fn trace(&self, ctx: &TraceContext<'_>) {
+            for elem in self {
+                elem.trace(ctx);
+            }
+        }
+    }
+
+    unsafe impl<T: Trace> Trace for alloc::collections::VecDeque<T> {
+        fn trace(&self, ctx: &TraceContext<'_>) {
+            for elem in self {
+                elem.trace(ctx);
+            }
+        }
+    }
+
+    unsafe impl<T: Trace> Trace for alloc::collections::LinkedList<T> {
+        fn trace(&self, ctx: &TraceContext<'_>) {
+            for elem in self {
+                elem.trace(ctx);
+            }
+        }
+    }
 }

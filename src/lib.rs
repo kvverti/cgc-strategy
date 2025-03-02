@@ -1,4 +1,12 @@
-use std::{marker::PhantomData, ops::Deref};
+#![no_std]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "std")]
+extern crate std;
+
+use core::{marker::PhantomData, ops::Deref};
 
 use heap::{GcStrategy, GcVtable, Handle};
 use trace::Trace;

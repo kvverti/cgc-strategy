@@ -1,4 +1,4 @@
-use std::{ptr::NonNull, alloc::Layout};
+use core::{ptr::NonNull, alloc::Layout};
 
 use crate::trace::{TraceContext, Trace};
 
