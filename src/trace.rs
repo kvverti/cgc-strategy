@@ -18,13 +18,19 @@ impl TraceContext<'_> {
 /// This trait may be implemented on a variety of types, including non-`'static`, non-`Send`, and non-`Sync`
 /// types. However, not all types can implement this trait. At a minimum, all GC object types must allow the
 /// GC shared access to all nested GC objects at all times. This prevents types that give exclusive access
-/// to nested GC objects, such as mutexes, from being GC objects. Implementors should carefully consider how
-/// this requirement affects types that are not thread-safe (non-`Sync`) and types that hold borrows (non-`'static`).
-/// That being said, types that contain only `Trace` types will generally be able to implement this trait.
+/// to nested GC objects, such as mutexes, from being GC objects. That being said, types that contain only
+/// `Trace` types will generally be able to implement this trait.
+/// 
+/// ## Thread Safety
+/// The implementation of [`Trace::trace`] must be thread-safe, as the GC may invoke this method from a different thread
+/// while other threads are concurrently accessing the object. This may occur even if the type does not implement `Sync`.
+/// Therefore, the implementation must not access any thread-unsafe state. Note that types such as `Rc<T>`, which contain
+/// a thread-unsafe `Cell`, are still able to implement `Trace` because the thread-unsafe components are not used to access
+/// the pointed-to value.
 ///
-/// # Finalization
+/// ## Finalization
 /// GC object types should not rely on timely destruction. The drop glue of a GC object, if it exists, is called a
-/// _finalizer_, and may (or may not!) be invoked at any point after it becomes unreachable. The GC does not directly
+/// _finalizer_, and may (or may not!) be invoked at any point after the object becomes unreachable. The GC does not directly
 /// invoke the finalizer of any GC object. Instead, the GC notifies an object's associated finalization queue that
 /// the object may be finalized. If a GC object is not registered with a finalization queue, then that object's finalizer
 /// will *not* be run before the object's storage is reclaimed.
@@ -33,7 +39,7 @@ impl TraceContext<'_> {
 /// access the data of any nested GC object, it will result in a panic.
 ///
 /// # Safety
-/// Implementations *must* uphold the contracts of all methods. Failure to do so
+/// Implementations must uphold the contracts of all methods and the trait. Failure to do so
 /// may result in memory corruption or other undefined behavior.
 pub unsafe trait Trace {
     /// Mark all GC objects directly reachable from this object.
@@ -67,8 +73,23 @@ empty_trace! {
 }
 empty_trace! { () }
 
+/// SAFETY: there is nothing to trace
 unsafe impl<T: ?Sized> Trace for PhantomData<T> {
     fn trace(&self, _: &TraceContext<'_>) {}
+}
+
+/// SAFETY: no threading or drop invariants for this type
+unsafe impl<T: Trace + ?Sized> Trace for &T {
+    fn trace(&self, ctx: &TraceContext<'_>) {
+        (**self).trace(ctx);
+    }
+}
+
+/// SAFETY: no threading or drop invariants for this type
+unsafe impl<T: Trace + ?Sized> Trace for &mut T {
+    fn trace(&self, ctx: &TraceContext<'_>) {
+        (**self).trace(ctx);
+    }
 }
 
 /// `Gc<T>` is itself `Trace`! It just forwards itself to the context.
